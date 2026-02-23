@@ -1424,7 +1424,7 @@ function renderClients() {
     const totalValue = cQuotes.filter(q=>q.status==='concluido').reduce((sum,q)=>sum+q.grandTotal,0);
     
     return `<div class="client-card" id="ccard-${c.id}">
-      <div class="client-card-head" onclick="toggleClientCard('${c.id}')">
+      <div class="client-card-head" onclick="toggleClientCard('${c.id}')" ontouchstart="touchStart(event)" ontouchend="touchEnd(event,'toggleClientCard','${c.id}')"  ontouchmove="touchMove(event)">
         <div class="flex-1">
           <p class="font-semibold text-slate-800 text-sm">${escHtml(c.name)}</p>
           <div class="text-xs text-slate-500 mt-0.5 space-x-2">
@@ -1945,7 +1945,7 @@ function renderHistory() {
     const estimatedDur = (q.services||[]).reduce((a,s)=>a+(s.duration||0),0) || 60;
 
     return `<div class="quote-card" id="qcard-${q.id}">
-      <div class="quote-card-head" onclick="toggleQuoteCard('${q.id}')">
+      <div class="quote-card-head" onclick="toggleQuoteCard('${q.id}')" ontouchstart="touchStart(event)" ontouchend="touchEnd(event,'toggleQuoteCard','${q.id}')" ontouchmove="touchMove(event)">
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="font-semibold text-slate-800">${escHtml(q.clientName||'sem nome')}</span>
@@ -2714,6 +2714,23 @@ loadAll();
 applyStateToUI();
 checkShareView();
 renderDashboard();
+
+/* ── TOUCH HELPERS (evita toggle ao fazer scroll) ── */
+let _touchStartY = 0;
+let _touchMoved  = false;
+
+function touchStart(e) {
+  _touchStartY = e.touches[0].clientY;
+  _touchMoved  = false;
+}
+function touchMove(e) {
+  if (Math.abs(e.touches[0].clientY - _touchStartY) > 8) _touchMoved = true;
+}
+function touchEnd(e, fn, id) {
+  if (_touchMoved) { e.preventDefault(); return; }
+  e.preventDefault();
+  window[fn](id);
+}
 
 console.log('✅ Benedito Resolve — sistema carregado.');
 </script>
