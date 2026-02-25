@@ -13,7 +13,114 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <title>Benedito Resolve — Orçamentos</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDNRyksKZ1Lvj-sWeUV9_5ZwAardNnQjB8",
+      authDomain: "benny-383f5.firebaseapp.com",
+      projectId: "benny-383f5",
+      storageBucket: "benny-383f5.firebasestorage.app",
+      messagingSenderId: "683593146961",
+      appId: "1:683593146961:web:ad8678f1ee5e1b3a744e70"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db   = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ── Estado de sincronização ──────────────────────────────
+    let _firebaseUser = null;
+    let _syncPending  = false;
+
+    auth.onAuthStateChanged(user => {
+      _firebaseUser = user;
+      const panelOut = document.getElementById('firebase-panel-loggedout');
+      const panelIn  = document.getElementById('firebase-panel-loggedin');
+      const emailEl  = document.getElementById('firebase-user-email');
+      if (user) {
+        console.log('✅ Firebase: logado como', user.uid);
+        if (panelOut) panelOut.style.display = 'none';
+        if (panelIn)  panelIn.style.display  = 'block';
+        if (emailEl)  emailEl.textContent     = '👤 ' + (user.email || user.displayName || user.uid);
+        _loadFromCloud();
+      } else {
+        if (panelOut) panelOut.style.display = 'block';
+        if (panelIn)  panelIn.style.display  = 'none';
+      }
+    });
+
+    // Login com Google
+    function loginGoogle() {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      auth.signInWithPopup(provider).catch(err => {
+        console.error('Erro no login Google:', err);
+        alert('Erro ao entrar com Google: ' + err.message);
+      });
+    }
+
+    function logout() {
+      if (!confirm('Sair da conta Google? Os dados locais são mantidos.')) return;
+      auth.signOut();
+      _firebaseUser = null;
+      _setSyncStatus('desconectado', '⚪');
+    }
+
+    // ── Salvar na nuvem ──────────────────────────────────────
+    async function _saveToCloud(data) {
+      if (!_firebaseUser) return;
+      try {
+        _setSyncStatus('salvando…', '🔄');
+        await db.collection('usuarios').doc(_firebaseUser.uid)
+          .collection('dados').doc('principal')
+          .set({ ...data, _savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        _setSyncStatus('sincronizado ☁️ ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), '✅');
+      } catch(e) {
+        console.error('Erro ao salvar na nuvem:', e);
+        _setSyncStatus('erro ao sincronizar', '⚠️');
+      }
+    }
+
+    // ── Carregar da nuvem ────────────────────────────────────
+    async function _loadFromCloud() {
+      if (!_firebaseUser) return;
+      try {
+        _setSyncStatus('carregando da nuvem…', '🔄');
+        const doc = await db.collection('usuarios').doc(_firebaseUser.uid)
+          .collection('dados').doc('principal').get();
+        if (doc.exists) {
+          const d = doc.data();
+          delete d._savedAt;
+          // mescla com estado atual (nuvem tem prioridade)
+          if (d.clientName !== undefined) state.clientName = d.clientName;
+          if (d.clientId   !== undefined) state.clientId   = d.clientId;
+          if (Array.isArray(d.services))   state.services   = d.services.map(s=>({notes:'',materialCost:0,embedMaterial:false,duration:0,...s}));
+          if (d.travel)                    Object.assign(state.travel, d.travel);
+          if (Array.isArray(d.quotes))     state.quotes     = d.quotes;
+          if (Array.isArray(d.fixedCosts)) state.fixedCosts = d.fixedCosts;
+          if (Array.isArray(d.clients))    state.clients    = d.clients;
+          if (Array.isArray(d.catalog) && d.catalog.length) state.catalog = d.catalog;
+          if (d.config)                    Object.assign(state.config, d.config);
+          // re-renderiza com dados da nuvem
+          applyStateToUI();
+          renderDashboard();
+          _setSyncStatus('sincronizado ☁️ ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), '✅');
+          console.log('✅ Dados carregados da nuvem');
+        } else {
+          _setSyncStatus('nuvem vazia — dados locais em uso', '☁️');
+        }
+      } catch(e) {
+        console.error('Erro ao carregar da nuvem:', e);
+        _setSyncStatus('erro ao carregar nuvem', '⚠️');
+      }
+    }
+
+    function _setSyncStatus(msg, icon) {
+      const el = document.getElementById('sync-status');
+      if (el) el.innerHTML = `${icon} ${msg}`;
+    }
+  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
@@ -43,7 +150,7 @@
       background: #eef2f7;
       min-height: 100vh;
       /* espaço para bottom nav no mobile */
-      padding-bottom: 80px;
+      padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     }
     @media(min-width:768px){ body { padding-bottom: 0; } }
 
@@ -214,7 +321,9 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      touch-action: pan-y;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .quote-card-head:hover, .client-card-head:hover { background: var(--slate-50); }
     .quote-card-body, .client-card-body { display: none; padding: 18px; border-top: 1px solid var(--slate-100); }
@@ -233,14 +342,10 @@
     .modal.open { display:flex; }
     .modal .inner { background:white; border-radius:20px; padding:28px; width:94%; box-shadow: 0 8px 40px rgba(0,0,0,.18); }
     #backup-modal .inner { max-width:480px; }
-    #share-modal  .inner { max-width:560px; }
-
     /* ── UTILITY ─────────────────────────────────────────── */
     .d-none { display:none !important; }
 
     /* ── SHARE VIEW ──────────────────────────────────────── */
-    #share-view { display:none; position:fixed; inset:0; background:#f1f5f9; z-index:9999; overflow-y:auto; padding:24px; }
-    #share-view.open { display:block; }
 
     /* ── RANKING BARS ────────────────────────────────────── */
     .rank-bar-wrap { height:8px; background:var(--slate-200); border-radius:99px; overflow:hidden; flex:1; }
@@ -288,7 +393,7 @@
     #search-results { z-index:50; }
   </style>
 </head>
-<body class="p-3 md:p-6">
+<body class="px-3 pt-3 md:px-6 md:pt-6">
 <!-- ═══ TELA DE SENHA ═══ -->
 <div id="lock-screen" style="display:flex;position:fixed;inset:0;background:#f1f5f9;z-index:99999;align-items:center;justify-content:center;">
   <div style="background:white;border-radius:20px;padding:36px 28px;width:92%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.12);text-align:center;">
@@ -343,43 +448,7 @@
 
 
 <!-- ═══ SHARE READ-ONLY VIEW ═══ -->
-<div id="share-view">
-  <div style="max-width:560px;margin:0 auto">
-    <div class="card p-6 border-t-4 border-blue-500">
-      <div class="flex items-center gap-3 mb-5">
-        <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
-          </svg>
-        </div>
-        <div>
-          <p id="share-owner-name" class="font-bold text-slate-800">Proposta de Serviços</p>
-          <p id="share-owner-sub" class="text-xs text-slate-400"></p>
-        </div>
-      </div>
-      <pre id="share-text" class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-mono bg-slate-50 p-4 rounded-lg"></pre>
-      <button onclick="document.getElementById('share-view').classList.remove('open')"
-        class="mt-4 w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition">fechar</button>
-    </div>
-  </div>
-</div>
-
 <!-- ═══ SHARE MODAL ═══ -->
-<div id="share-modal" class="modal">
-  <div class="inner">
-    <h3 class="text-lg font-bold text-slate-800 mb-2">Link da proposta</h3>
-    <p class="text-sm text-slate-500 mb-4">Compartilhe com o cliente. Ele verá a proposta em uma página limpa e profissional.</p>
-    <div class="flex gap-2">
-      <input id="share-url-input" type="text" readonly class="fi flex-1 text-xs font-mono bg-slate-50" />
-      <button onclick="copyShareLink()" class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition font-semibold whitespace-nowrap">copiar link</button>
-    </div>
-    <p class="text-xs text-slate-400 mt-3">⚠️ O link funciona apenas neste dispositivo e navegador.</p>
-    <button onclick="document.getElementById('share-modal').classList.remove('open')"
-      class="mt-4 w-full py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-200 transition">fechar</button>
-  </div>
-</div>
-
 <!-- ═══ EDIT QUOTE MODAL ═══ -->
 <div id="edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px;">
   <div style="background:white;border-radius:16px;padding:24px;max-width:580px;width:100%;margin:auto;">
@@ -469,10 +538,31 @@
 <div id="backup-modal" class="modal">
   <div class="inner">
     <div class="flex justify-between items-center mb-5">
-      <h3 class="text-xl font-bold text-slate-800">💾 Backup (JSON)</h3>
+      <h3 class="text-xl font-bold text-slate-800">💾 Backup</h3>
       <button onclick="document.getElementById('backup-modal').classList.remove('open')" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
     </div>
-    <p class="text-sm text-slate-500 mb-5">O arquivo JSON contém <strong>todos os seus dados</strong>: orçamentos, histórico, clientes, catálogo e configurações. Guarde-o no Google Drive ou pendrive.</p>
+
+    <!-- Painel Firebase -->
+    <div id="firebase-panel-loggedout" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px;">
+      <p style="font-size:14px;font-weight:600;color:#1e40af;margin-bottom:8px;">☁️ Sincronização na Nuvem</p>
+      <p style="font-size:13px;color:#475569;margin-bottom:12px;">Entre com sua conta Google para sincronizar automaticamente entre celular e notebook.</p>
+      <button onclick="loginGoogle()" style="width:100%;padding:10px;background:#1d4ed8;color:white;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;">
+        🔑 Entrar com Google
+      </button>
+    </div>
+    <div id="firebase-panel-loggedin" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:16px;margin-bottom:16px;">
+      <p style="font-size:14px;font-weight:600;color:#15803d;margin-bottom:4px;">☁️ Nuvem ativa</p>
+      <p id="firebase-user-email" style="font-size:12px;color:#475569;margin-bottom:8px;"></p>
+      <p id="sync-status" style="font-size:12px;color:#475569;margin-bottom:10px;">⚪ aguardando…</p>
+      <button onclick="_loadFromCloud()" style="padding:8px 14px;background:white;border:1px solid #86efac;border-radius:8px;font-size:12px;font-weight:600;color:#15803d;cursor:pointer;margin-right:8px;">
+        🔄 Forçar sincronização
+      </button>
+      <button onclick="logout()" style="padding:8px 14px;background:white;border:1px solid #fca5a5;border-radius:8px;font-size:12px;font-weight:600;color:#991b1b;cursor:pointer;">
+        Sair
+      </button>
+    </div>
+
+    <p class="text-sm text-slate-500 mb-4">Backup manual em JSON (segurança extra):</p>
     <div class="grid grid-cols-2 gap-3 mb-4">
       <button onclick="exportJSON()"
         class="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition flex items-center justify-center gap-2">
@@ -669,12 +759,8 @@
           <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
             <h2 class="text-base font-semibold text-slate-700">Proposta profissional</h2>
             <div class="flex gap-2 flex-wrap">
-              <button onclick="generateShareLink()"
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg transition font-medium">🔗 link</button>
               <button id="btn-copy-proposal"
                 class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg transition font-medium">copiar texto</button>
-              <button id="btn-export-pdf"
-                class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition font-medium">exportar PDF</button>
             </div>
           </div>
           <pre id="proposal-content" class="text-slate-700 text-sm leading-relaxed bg-slate-50 p-4 rounded-xl min-h-[160px] whitespace-pre-wrap font-mono">olá! segue o detalhamento do orçamento solicitado:
@@ -682,14 +768,6 @@
 (selecione serviços para gerar a proposta)</pre>
         </div>
 
-        <div class="card p-6 border-t-4 border-green-400">
-          <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
-            <h2 class="text-base font-semibold text-slate-700">Script de fechamento</h2>
-            <button id="btn-copy-script"
-              class="text-xs bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 px-3 py-2 rounded-lg transition font-medium">copiar proposta + script</button>
-          </div>
-          <pre id="script-content" class="text-slate-700 text-sm leading-relaxed bg-slate-50 p-4 rounded-xl min-h-[80px] whitespace-pre-wrap font-mono">selecione os serviços para gerar o script.</pre>
-        </div>
       </section>
     </div>
   </div>
@@ -725,10 +803,17 @@
 
       <!-- lista de clientes -->
       <div class="lg:col-span-2">
-        <div class="flex justify-between items-center mb-4">
+        <div class="flex justify-between items-center mb-3">
           <h2 class="text-base font-bold text-slate-800"><span id="clients-count">0</span> Clientes Cadastrados</h2>
         </div>
-        <div id="clients-list" class="space-y-3"></div>
+        <div class="relative mb-4">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/>
+          </svg>
+          <input id="clients-search" type="text" placeholder="buscar por nome, telefone ou endereço…"
+            class="fi pl-9 text-sm" oninput="renderClients()" />
+        </div>
+        <div id="clients-list" class="space-y-3 pb-4"></div>
       </div>
 
     </div>
@@ -755,7 +840,7 @@
         <input type="text" id="hist-search" placeholder="buscar cliente…" class="fi w-auto text-xs" oninput="renderHistory()" />
       </div>
     </div>
-    <div id="history-list" class="space-y-3"></div>
+    <div id="history-list" class="space-y-3 pb-4"></div>
   </div>
 
   <!-- ══════════════════════════════════════════
@@ -1045,7 +1130,7 @@ const SK = 'benedito_v8';
 
 function saveAll() {
   try {
-    localStorage.setItem(SK, JSON.stringify({
+    const payload = {
       clientName: state.clientName,
       clientId:   state.clientId,
       services:   state.services,
@@ -1055,8 +1140,14 @@ function saveAll() {
       clients:    state.clients,
       catalog:    state.catalog,
       config:     state.config,
-    }));
+    };
+    localStorage.setItem(SK, JSON.stringify(payload));
     updateBackupDate();
+    // Salva na nuvem com debounce (evita chamadas excessivas)
+    if (typeof _saveToCloud === 'function') {
+      clearTimeout(window._cloudSaveTimer);
+      window._cloudSaveTimer = setTimeout(() => _saveToCloud(payload), 2000);
+    }
   } catch(e) {
     console.error('Erro ao salvar:', e);
     alert('⚠️ Erro ao salvar: armazenamento cheio. Exporte um backup JSON e limpe orçamentos antigos.');
@@ -1413,18 +1504,33 @@ function deleteClient(id) {
 function renderClients() {
   document.getElementById('clients-count').innerText = state.clients.length;
   const list = document.getElementById('clients-list');
-  
+
   if (!state.clients.length) {
     list.innerHTML = `<div class="card p-10 text-center text-slate-400 italic">nenhum cliente cadastrado ainda.</div>`;
     return;
   }
 
-  list.innerHTML = state.clients.map(c => {
+  const term = (document.getElementById('clients-search')?.value || '').toLowerCase().trim();
+  const filtered = term
+    ? state.clients.filter(c =>
+        c.name.toLowerCase().includes(term) ||
+        (c.phone   || '').toLowerCase().includes(term) ||
+        (c.address || '').toLowerCase().includes(term) ||
+        (c.notes   || '').toLowerCase().includes(term)
+      )
+    : state.clients;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="card p-10 text-center text-slate-400 italic">nenhum cliente encontrado para "<strong>${escHtml(term)}</strong>".</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(c => {
     const cQuotes = state.quotes.filter(q => q.clientId===c.id);
     const totalValue = cQuotes.filter(q=>q.status==='concluido').reduce((sum,q)=>sum+q.grandTotal,0);
     
     return `<div class="client-card" id="ccard-${c.id}">
-      <div class="client-card-head" onclick="toggleClientCard('${c.id}')" ontouchstart="touchStart(event)" ontouchend="touchEnd(event,'toggleClientCard','${c.id}')"  ontouchmove="touchMove(event)">
+      <div class="client-card-head" data-toggle="client" data-id="${c.id}">
         <div class="flex-1">
           <p class="font-semibold text-slate-800 text-sm">${escHtml(c.name)}</p>
           <div class="text-xs text-slate-500 mt-0.5 space-x-2">
@@ -1464,7 +1570,19 @@ function renderClients() {
 }
 
 function toggleClientCard(id) {
-  document.getElementById('ccard-'+id)?.classList.toggle('open');
+  const card = document.getElementById('ccard-'+id);
+  if (!card) return;
+  card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    setTimeout(() => {
+      const navH = window.innerWidth < 768 ? 80 : 0;
+      const cardBottom = card.getBoundingClientRect().bottom;
+      const viewportH  = window.innerHeight - navH;
+      if (cardBottom > viewportH) {
+        window.scrollBy({ top: cardBottom - viewportH + 16, behavior: 'smooth' });
+      }
+    }, 50); // aguarda o display:block renderizar
+  }
 }
 
 /* ============================================================
@@ -1801,12 +1919,12 @@ function buildProposalText(dateOverride) {
   const dateStr = dateOverride || new Date().toLocaleDateString('pt-BR');
   const cfg     = state.config;
 
-  let t = `🛠️ *Orçamento de Prestação de Serviços* 🛠️\n`;
+  let t = `*Orçamento de Prestação de Serviços*\n`;
   t += `${cfg.ownerName}${cfg.city ? ' · '+cfg.city : ''}\n`;
-  if (cfg.phone) t += `📱 ${cfg.phone}\n`;
+  if (cfg.phone) t += `Tel.: ${cfg.phone}\n`;
   t += `\n`;
-  if (client) t += `👤 Cliente: ${client}\n`;
-  t += `📅 Data: ${dateStr}\n\n`;
+  if (client) t += `Cliente: ${client}\n`;
+  t += `Data: ${dateStr}\n\n`;
 
   let grandTotal = 0;
   state.services.forEach(s => {
@@ -1814,54 +1932,41 @@ function buildProposalText(dateOverride) {
     const mat  = s.embedMaterial ? (Number(s.materialCost)||0) : 0;
     const shown = base + mat + travPerSvc;
     grandTotal += shown;
-    t += `✅ ${s.name}\n`;
-    if (s.notes) t += `   📝 ${s.notes}\n`;
-    t += `   Investimento: ${fBRL5(shown)}\n\n`;
+    t += `- ${s.name}\n`;
+    if (s.notes) t += `  Obs.: ${s.notes}\n`;
+    t += `  Valor: ${fBRL5(shown)}\n\n`;
   });
 
   // Deslocamento visível
   if (travEnabled && mode==='visible' && travelCost>0) {
     grandTotal += travelCost;
-    t += `🚗 *Deslocamento* (${totalKm.toFixed(1)} km)\n`;
-    t += `   Combustível: ${fBRL(fuelCost)}\n`;
-    t += `   Manutenção veículo: ${fBRL(maintCost)}\n`;
-    t += `   Subtotal deslocamento: ${fBRL(travelCost)}\n\n`;
+    t += `*Deslocamento* (${totalKm.toFixed(1)} km)\n`;
+    t += `  Combustível: ${fBRL(fuelCost)}\n`;
+    t += `  Manutenção veículo: ${fBRL(maintCost)}\n`;
+    t += `  Subtotal deslocamento: ${fBRL(travelCost)}\n\n`;
   }
 
-  t += `💰 *Total: ${fBRL5(grandTotal)}*\n\n`;
-  t += `⚠️ *Observações:*\n`;
-  t += `• Início após aprovação.\n`;
-  t += `• Garantia de ${cfg.guarantee}${cfg.guarantee.includes('meses')||cfg.guarantee.includes('ano')?'':' meses'} (não cobre mau uso, desgaste natural ou peças de terceiros).\n`;
-  t += `• Materiais não inclusos (exceto se combinado o contrário).\n`;
-  if (cfg.pixKey) t += `• Pagamento à vista via *Pix* (${cfg.pixType}: ${cfg.pixKey}) ou dinheiro.\n`;
-  else t += `• Pagamento à vista via *Pix* ou dinheiro.\n`;
-  t += `\nPodemos prosseguir? Aguardamos seu retorno!`;
+  t += `*Total: ${fBRL5(grandTotal)}*\n\n`;
+  t += `*Observações:*\n`;
+  t += `- Início após aprovação.\n`;
+  t += `- Garantia de ${cfg.guarantee}${cfg.guarantee.includes('meses')||cfg.guarantee.includes('ano')?'':' meses'} (não cobre mau uso, desgaste natural ou peças de terceiros).\n`;
+  t += `- Materiais não inclusos (exceto se combinado o contrário).\n`;
+  if (cfg.pixKey) t += `- Pagamento à vista via *Pix* (${cfg.pixType}: ${cfg.pixKey}) ou dinheiro.\n`;
+  else t += `- Pagamento à vista via *Pix* ou dinheiro.\n`;
+  t += `\nPodemos prosseguir? Aguardo seu retorno.`;
   return t;
 }
 
 function updateTexts() {
   renderUpsell();
   const proposalBox = document.getElementById('proposal-content');
-  const scriptBox   = document.getElementById('script-content');
 
   if (!state.services.length) {
-    proposalBox.innerText='olá! segue o detalhamento do orçamento solicitado:\n\n(selecione serviços para gerar a proposta)';
-    scriptBox.innerText='selecione os serviços para gerar o script de fechamento.';
+    proposalBox.innerText='Selecione os serviços para gerar a proposta.';
     return;
   }
 
-  proposalBox.innerText = buildProposalText('(data inserida ao copiar/exportar)');
-
-  const first  = state.services[0].name.toLowerCase();
-  const upsell = getUpsell();
-  let scr = `*script sugerido (fechamento):*\n\n`;
-  scr += `"vi que você precisa resolver isso do(a) *${first}*. consigo te encaixar em horário prioritário nos próximos dois dias. posso confirmar para amanhã?"`;
-  if (upsell.length) {
-    scr += `\n\n*na mesma visita (opcional):*\n`;
-    upsell.forEach(u => scr += `• ${u}\n`);
-    scr += `\n"se fizer sentido, já resolvo isso no mesmo atendimento — você evita outra chamada."`;
-  }
-  scriptBox.innerText = scr;
+  proposalBox.innerText = buildProposalText('(data inserida ao copiar)');
 }
 
 /* ============================================================
@@ -1945,7 +2050,7 @@ function renderHistory() {
     const estimatedDur = (q.services||[]).reduce((a,s)=>a+(s.duration||0),0) || 60;
 
     return `<div class="quote-card" id="qcard-${q.id}">
-      <div class="quote-card-head" onclick="toggleQuoteCard('${q.id}')" ontouchstart="touchStart(event)" ontouchend="touchEnd(event,'toggleQuoteCard','${q.id}')" ontouchmove="touchMove(event)">
+      <div class="quote-card-head" data-toggle="quote" data-id="${q.id}">
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="font-semibold text-slate-800">${escHtml(q.clientName||'sem nome')}</span>
@@ -2063,7 +2168,19 @@ function renderHistory() {
 }
 
 function toggleQuoteCard(id) {
-  document.getElementById('qcard-'+id)?.classList.toggle('open');
+  const card = document.getElementById('qcard-'+id);
+  if (!card) return;
+  card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    setTimeout(() => {
+      const navH = window.innerWidth < 768 ? 80 : 0;
+      const cardBottom = card.getBoundingClientRect().bottom;
+      const viewportH  = window.innerHeight - navH;
+      if (cardBottom > viewportH) {
+        window.scrollBy({ top: cardBottom - viewportH + 16, behavior: 'smooth' });
+      }
+    }, 50);
+  }
 }
 
 function updateQuoteStatus(id, status) {
@@ -2373,58 +2490,10 @@ async function copyProposal() {
   alert(ok?'✅ proposta copiada!':'❌ erro ao copiar.');
 }
 
-async function copyScript() {
-  const text = buildProposalText()+'\n\n'+document.getElementById('script-content').innerText;
-  const ok = await copyText(text);
-  alert(ok?'✅ proposta + script copiados!':'❌ erro ao copiar.');
-}
 
-function exportPDF() {
-  if (typeof jspdf === 'undefined' || !jspdf.jsPDF) {
-    alert('❌ Biblioteca jsPDF não carregada. Verifique sua conexão.');
-    return;
-  }
-  
-  try {
-    const {jsPDF} = jspdf;
-    const doc = new jsPDF();
-    const text = buildProposalText();
-    const lines = doc.splitTextToSize(text, 180);
-    doc.text(lines, 15, 15);
-    doc.save(`orcamento-${state.clientName||'sem-nome'}-${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.pdf`);
-  } catch(err) {
-    console.error('Erro ao gerar PDF:', err);
-    alert('❌ Erro ao gerar PDF: ' + err.message);
-  }
-}
 
-function generateShareLink() {
-  const text = buildProposalText();
-  const encoded = btoa(unescape(encodeURIComponent(text)));
-  const url = window.location.origin + window.location.pathname + '?share=' + encoded;
-  document.getElementById('share-url-input').value = url;
-  document.getElementById('share-modal').classList.add('open');
-}
 
-async function copyShareLink() {
-  const url = document.getElementById('share-url-input').value;
-  const ok = await copyText(url);
-  alert(ok?'✅ link copiado!':'❌ erro ao copiar.');
-}
 
-function checkShareView() {
-  const params = new URLSearchParams(window.location.search);
-  const share = params.get('share');
-  if (share) {
-    try {
-      const text = decodeURIComponent(escape(atob(share)));
-      document.getElementById('share-text').innerText = text;
-      document.getElementById('share-view').classList.add('open');
-    } catch(err) {
-      console.error('Erro ao decodificar link:', err);
-    }
-  }
-}
 
 /* ============================================================
    EDIÇÃO DE ORÇAMENTOS
@@ -2696,8 +2765,6 @@ document.getElementById('current-date').innerText = new Date().toLocaleDateStrin
 });
 
 document.getElementById('btn-copy-proposal').addEventListener('click', copyProposal);
-document.getElementById('btn-copy-script').addEventListener('click', copyScript);
-document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
 
 document.getElementById('client-name').addEventListener('input', e => {
   state.clientName = e.target.value; updateTexts(); saveAll();
@@ -2712,27 +2779,50 @@ document.addEventListener('click', e => {
 
 loadAll();
 applyStateToUI();
-checkShareView();
 renderDashboard();
 
-/* ── TOUCH HELPERS (evita toggle ao fazer scroll) ── */
-let _touchStartY = 0;
-let _touchMoved  = false;
-
-function touchStart(e) {
-  _touchStartY = e.touches[0].clientY;
-  _touchMoved  = false;
-}
-function touchMove(e) {
-  if (Math.abs(e.touches[0].clientY - _touchStartY) > 8) _touchMoved = true;
-}
-function touchEnd(e, fn, id) {
-  if (_touchMoved) { e.preventDefault(); return; }
-  e.preventDefault();
-  window[fn](id);
-}
-
 console.log('✅ Benedito Resolve — sistema carregado.');
+
+/* ── Scroll-safe card toggle ─────────────────────────────
+   Usa touchstart/touchend com threshold de 8px.
+   Se o dedo se moveu (scroll), ignora o toque.          */
+(function() {
+  let startY = 0, startX = 0, moved = false;
+
+  document.addEventListener('touchstart', function(e) {
+    startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+    moved = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (Math.abs(e.touches[0].clientY - startY) > 8 ||
+        Math.abs(e.touches[0].clientX - startX) > 8) {
+      moved = true;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (moved) return;
+    const head = e.target.closest('[data-toggle]');
+    if (!head) return;
+    e.preventDefault();
+    const type = head.dataset.toggle;
+    const id   = head.dataset.id;
+    if (type === 'client') toggleClientCard(id);
+    if (type === 'quote')  toggleQuoteCard(id);
+  }, { passive: false });
+
+  // Fallback para mouse (desktop)
+  document.addEventListener('click', function(e) {
+    const head = e.target.closest('[data-toggle]');
+    if (!head) return;
+    const type = head.dataset.toggle;
+    const id   = head.dataset.id;
+    if (type === 'client') toggleClientCard(id);
+    if (type === 'quote')  toggleQuoteCard(id);
+  });
+})();
 </script>
 
 <script>
