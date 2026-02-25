@@ -1,10 +1,9 @@
-const CACHE_NAME = 'orcamentos-v1';
+const CACHE_NAME = 'orcamentos-v4';
 const ASSETS = [
-  './Orcamentov18.html',
+  './index.html',
   './manifest.json'
 ];
 
-// Instala e faz cache dos arquivos principais
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
@@ -12,7 +11,6 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// Ativa e remove caches antigos
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -22,7 +20,6 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Serve do cache quando offline, tenta rede quando online
 self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request).then(cached => {
