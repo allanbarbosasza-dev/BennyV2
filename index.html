@@ -463,6 +463,13 @@
       <input id="eq-client" type="text" class="fi text-sm" placeholder="nome do cliente" />
     </div>
 
+    <!-- data do orçamento -->
+    <div class="mb-3">
+      <label class="label-xs">📅 data do orçamento</label>
+      <input id="eq-date" type="date" class="fi text-sm" />
+      <p class="text-xs text-slate-400 mt-1">Altere se precisar lançar com data retroativa.</p>
+    </div>
+
     <!-- serviços existentes -->
     <div class="mb-3">
       <label class="label-xs mb-2 block">serviços</label>
@@ -2511,6 +2518,13 @@ function openEditModal(id) {
 
   document.getElementById('eq-client').value = q.clientName||'';
 
+  // data do orçamento (usa savedAt; fallback para hoje)
+  const _savedDate = q.savedAt ? new Date(q.savedAt) : new Date();
+  const _yyyy = _savedDate.getFullYear();
+  const _mm   = String(_savedDate.getMonth()+1).padStart(2,'0');
+  const _dd   = String(_savedDate.getDate()).padStart(2,'0');
+  document.getElementById('eq-date').value = `${_yyyy}-${_mm}-${_dd}`;
+
   // deslocamento
   const t = q.travel||{};
   document.getElementById('eq-dist').value        = t.distance||0;
@@ -2676,6 +2690,17 @@ function saveEditedQuote() {
 
   // atualiza o orçamento
   q.clientName   = safeStr(document.getElementById('eq-client').value) || q.clientName;
+
+  // data personalizada
+  const newDateVal = document.getElementById('eq-date').value;
+  if (newDateVal) {
+    // mantém a hora original, troca só o dia/mês/ano
+    const orig = q.savedAt ? new Date(q.savedAt) : new Date();
+    const [ny, nm, nd] = newDateVal.split('-').map(Number);
+    orig.setFullYear(ny, nm-1, nd);
+    q.savedAt = orig.toISOString();
+  }
+
   q.services     = JSON.parse(JSON.stringify(_editServices));
   q.travelCost   = travAmt;
   q.fuelCost     = mode !== 'none' ? fuelCost  : 0;
